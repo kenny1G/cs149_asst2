@@ -5,7 +5,6 @@
 #include <mutex>
 #include <thread>
 #include <vector>
-#include <atomic>
 
 IRunnable::~IRunnable() {}
 
@@ -115,12 +114,14 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(
               _completed_tasks.fetch_add(local_count);
               local_count = 0;
             }
-            _work_available.wait(
-                lock, [this] { return _stop || !_task_queue.empty(); });
+            /* _work_available.wait( */
+            /*     lock, [this] { return _stop || !_task_queue.empty(); }); */
             if (_stop) {
               /* printf("thread %d, Stopping\n", i); */
               return;
-            } 
+            } else {
+              continue;
+            }
           }
 
           task = std::move(_task_queue.front());
@@ -138,7 +139,7 @@ TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
     std::lock_guard<std::mutex> lock(_just_a_mutex);
     _stop = true;
   }
-  _work_available.notify_all();
+  /* _work_available.notify_all(); */
   for (auto &thread : _thread_pool) {
     thread.join();
   }
@@ -149,15 +150,15 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable *runnable,
                                                int num_total_tasks) {
   _completed_tasks.store(0);
   for (int i = 0; i < num_total_tasks; ++i) {
+    std::function<void()> task = [runnable, i, num_total_tasks] {
+      runnable->runTask(i, num_total_tasks);
+    };
     {
       std::lock_guard<std::mutex> lock(_just_a_mutex);
-      std::function<void()> task = [runnable, i, num_total_tasks] {
-        runnable->runTask(i, num_total_tasks);
-      };
       _task_queue.emplace(std::move(task));
     }
   }
-  _work_available.notify_all();
+  /* _work_available.notify_all(); */
 
   while (_completed_tasks.load() < num_total_tasks) {
   }
