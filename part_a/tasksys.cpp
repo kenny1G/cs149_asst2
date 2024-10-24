@@ -189,25 +189,36 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
     int num_threads)
     : ITaskSystem(num_threads), _num_threads(num_threads),
       _thread_pool(num_threads), _stop(false) {
+
   for (int i = 0; i < num_threads; ++i) {
-    _thread_pool[i] = std::thread([this]() {
-      std::vector<std::function<void()>> tasks;
+    _thread_pool[i] = std::thread([this, i]() {
+      thread_local int local_count = 0;
       while (true) {
+        /* printf("In thread %d\n", i); */
+        std::function<void()> task;
         {
           std::unique_lock<std::mutex> lock(_just_a_mutex);
-          _work_available.wait(
-              lock, [this] { return _stop || !_task_queue.empty(); });
-          if (_stop && _task_queue.empty()) {
-            /* printf("Stopping\n"); */
-            return;
+          if (_task_queue.empty()) {
+            if (local_count > 0) {
+              _completed_tasks.fetch_add(local_count);
+              local_count = 0;
+              if (_completed_tasks >= _num_tasks) {
+                _work_completed.notify_one();
+              }
+            }
+            _work_available.wait(
+                lock, [this] { return _stop || !_task_queue.empty(); });
+            if (_stop) {
+              /* printf("thread %d, Stopping\n", i); */
+              return;
+            }
           }
-          tasks = std::move(_task_queue.front());
+
+          task = std::move(_task_queue.front());
           _task_queue.pop();
         }
-
-        for (auto &task : tasks) {
-          task();
-        }
+        task();
+        local_count++;
       }
     });
   }
@@ -226,37 +237,25 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
                                                int num_total_tasks) {
-  std::atomic<int> completed_tasks(0);
-  int chunk_size = (num_total_tasks + _num_threads - 1) / _num_threads;
-
-  for (int j = 0; j < _num_threads; ++j) {
-    std::vector<std::function<void()>> thread_tasks;
+  _num_tasks.store(num_total_tasks);
+  _completed_tasks.store(0);
+  for (int i = 0; i < num_total_tasks; ++i) {
     {
       std::lock_guard<std::mutex> lock(_just_a_mutex);
-      int chunk_end_index = (j + 1) * chunk_size;
-      for (int i = j * chunk_size; i < chunk_end_index && i < num_total_tasks;
-           ++i) {
-        std::function<void()> task = [runnable, i, chunk_size, chunk_end_index,
-                                      num_total_tasks, &completed_tasks] {
-          runnable->runTask(i, num_total_tasks);
-          if (i == chunk_end_index - 1) {
-            completed_tasks.fetch_add(chunk_size);
-          }
-          /* printf("Complted tasks: %d\n", completed_tasks.load()); */
-        };
-        thread_tasks.emplace_back(std::move(task));
-        /* printf("the fuck"); */
-      }
-      /* printf("Assigned %zu task: \n", thread_tasks.size()); */
-      _task_queue.emplace(std::move(thread_tasks));
+      std::function<void()> task = [this, runnable, i, num_total_tasks] {
+        runnable->runTask(i, num_total_tasks);
+      };
+      _task_queue.emplace(std::move(task));
     }
-    _work_available.notify_one();
   }
+  _work_available.notify_all();
 
-  while (completed_tasks.load() < num_total_tasks) {
-    /* printf("Completed tasks: %d\n", completed_tasks.load()); */
-  }
-  /* runnable->runTask(i, num_total_tasks); */
+  std::unique_lock<std::mutex> lock(_just_a_mutex);
+  _work_completed.wait(lock, [this, num_total_tasks] {
+    return _completed_tasks >= num_total_tasks;
+  });
+  /* while (_completed_tasks.load() < num_total_tasks) { */
+  /* } */
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(
