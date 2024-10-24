@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <functional>
 #include <queue>
+#include <atomic>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -61,9 +62,11 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
         std::vector<std::thread> _thread_pool;
         bool _stop;
 
-        std::queue<std::vector<std::function<void()>>> _task_queue;
+        /* std::queue<std::vector<std::function<void()>>> _task_queue; */
+        std::queue<std::function<void()>> _task_queue;
         std::mutex _just_a_mutex;
         std::condition_variable _work_available;
+        std::atomic<int> _completed_tasks;
 };
 
 /*
