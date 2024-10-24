@@ -156,8 +156,8 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable *runnable,
       };
       _task_queue.emplace(std::move(task));
     }
-    _work_available.notify_one();
   }
+  _work_available.notify_all();
 
   while (_completed_tasks.load() < num_total_tasks) {
   }
