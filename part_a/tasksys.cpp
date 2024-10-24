@@ -1,6 +1,7 @@
 #include "tasksys.h"
 #include <atomic>
 #include <condition_variable>
+#include <cstdio>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -188,7 +189,7 @@ const char *TaskSystemParallelThreadPoolSleeping::name() {
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
     int num_threads)
     : ITaskSystem(num_threads), _num_threads(num_threads),
-      _thread_pool(num_threads), _stop(false) {
+      _thread_pool(num_threads), _stop(false), _num_runs(0) {
 
   for (int i = 0; i < num_threads; ++i) {
     _thread_pool[i] = std::thread([this, i]() {
@@ -202,9 +203,9 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
             if (local_count > 0) {
               _completed_tasks.fetch_add(local_count);
               local_count = 0;
-              if (_completed_tasks >= _num_tasks) {
-                _work_completed.notify_one();
-              }
+              /* if (_completed_tasks >= _num_tasks) { */
+              /*   _work_completed.notify_one(); */
+              /* } */
             }
             _work_available.wait(
                 lock, [this] { return _stop || !_task_queue.empty(); });
@@ -233,29 +234,44 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
   for (auto &thread : _thread_pool) {
     thread.join();
   }
+  printf("Number of runs: %d, average time asleep %lld\n", _num_runs,
+         total_time["main_thread_sleep"] / _num_runs);
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
                                                int num_total_tasks) {
-  _num_tasks.store(num_total_tasks);
+  _num_runs += 1;
+  /* _num_tasks.store(num_total_tasks); */
   _completed_tasks.store(0);
+  auto start_time = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < num_total_tasks; ++i) {
     {
       std::lock_guard<std::mutex> lock(_just_a_mutex);
-      std::function<void()> task = [this, runnable, i, num_total_tasks] {
+      _task_queue.emplace([this, runnable, i, num_total_tasks] {
         runnable->runTask(i, num_total_tasks);
-      };
-      _task_queue.emplace(std::move(task));
+      });
     }
   }
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto sleep_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      end_time - start_time);
+  /* printf("Time to enqueue %d tasks: %lld microseconds\n", num_total_tasks, */
+  /*        static_cast<long long>(sleep_duration.count())); */
   _work_available.notify_all();
 
-  std::unique_lock<std::mutex> lock(_just_a_mutex);
-  _work_completed.wait(lock, [this, num_total_tasks] {
-    return _completed_tasks >= num_total_tasks;
-  });
-  /* while (_completed_tasks.load() < num_total_tasks) { */
-  /* } */
+  /* std::unique_lock<std::mutex> lock(_just_a_mutex); */
+  start_time = std::chrono::high_resolution_clock::now();
+  /* _work_completed.wait(lock, [this, num_total_tasks] { */
+  /*   return _completed_tasks >= num_total_tasks; */
+  /* }); */
+  while (_completed_tasks.load() < num_total_tasks) {
+  }
+  end_time = std::chrono::high_resolution_clock::now();
+  sleep_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      end_time - start_time);
+  total_time["main_thread_sleep"] += static_cast<long long>(sleep_duration.count());
+  /* printf("Thread slept for %lld microseconds\n", */
+  /*        static_cast<long long>(sleep_duration.count())); */
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(

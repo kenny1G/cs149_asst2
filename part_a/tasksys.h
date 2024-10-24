@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <functional>
 #include <queue>
+#include <unordered_map>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -98,6 +99,10 @@ private:
   std::condition_variable _work_completed;
   std::atomic<int> _completed_tasks;
   std::atomic<int> _num_tasks;
+
+  //FOR TESTING
+  int _num_runs;
+  std::unordered_map<std::string, long long> total_time;
 };
 
 #endif
