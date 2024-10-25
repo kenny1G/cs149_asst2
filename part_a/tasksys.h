@@ -4,6 +4,7 @@
 #include "itasksys.h"
 #include <mutex>
 #include <atomic>
+#include <thread>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -46,18 +47,25 @@ public:
   std::atomic<int> evens_next_task;
   std::atomic<int> odds_next_task;
   std::atomic<int> num_completed_tasks;
+  std::mutex *mutex;
+  bool dead;
+  int num_total_tasks;
   IRunnable *runnable;
-  int num_threads;
+  // int num_threads_;
   ThreadState(int num_threads)
   {
+    mutex = new std::mutex();
     evens_next_task = 0;
     odds_next_task = 0;
     num_completed_tasks = 0;
-    num_threads = num_threads;
+    // num_threads_ = num_threads;
     runnable = nullptr;
+    num_total_tasks = 0;
+    dead = false;
   }
   ~ThreadState()
   {
+    delete mutex;
   }
 };
 /*
@@ -76,6 +84,10 @@ public:
   TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks,
                           const std::vector<TaskID> &deps);
   void sync();
+
+private:
+  std::thread *thread_pool;
+  ThreadState *thread_state;
 };
 
 /*
