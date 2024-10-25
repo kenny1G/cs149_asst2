@@ -95,6 +95,7 @@ private:
 
   std::queue<std::function<void()>> _task_queue;
   std::mutex _just_a_mutex;
+  std::mutex _another_mutex;
   std::condition_variable _work_available;
   std::condition_variable _work_completed;
   std::atomic<int> _completed_tasks;

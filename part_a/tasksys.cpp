@@ -199,16 +199,32 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
         std::function<void()> task;
         {
           std::unique_lock<std::mutex> lock(_just_a_mutex);
+        /*
+          auto start_time = std::chrono::high_resolution_clock::now();
+          std::unique_lock<std::mutex> lock(_just_a_mutex);
+          auto end_time = std::chrono::high_resolution_clock::now();
+          auto sleep_duration =
+              std::chrono::duration_cast<std::chrono::microseconds>(end_time -
+                                                                    start_time);
+          total_time["thread_lock %d"] +=
+              static_cast<long long>(sleep_duration.count());
+              */
           if (_task_queue.empty()) {
             if (local_count > 0) {
-              _completed_tasks.fetch_add(local_count);
+              int last_complete = _completed_tasks.fetch_add(local_count);
+              if (last_complete + local_count >= _num_tasks) {
+                lock.unlock();
+                {
+                  std::lock_guard<std::mutex> we_lock(_another_mutex);
+                  _work_completed.notify_all();
+                }
+                lock.lock();
+              }
               local_count = 0;
-              /* if (_completed_tasks >= _num_tasks) { */
-              /*   _work_completed.notify_one(); */
-              /* } */
             }
             _work_available.wait(
                 lock, [this] { return _stop || !_task_queue.empty(); });
+
             if (_stop) {
               /* printf("thread %d, Stopping\n", i); */
               return;
@@ -218,8 +234,14 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
           task = std::move(_task_queue.front());
           _task_queue.pop();
         }
+        /* auto start_time = std::chrono::high_resolution_clock::now(); */
         task();
         local_count++;
+        /* auto end_time = std::chrono::high_resolution_clock::now(); */
+        /* auto sleep_duration = */
+        /*     std::chrono::duration_cast<std::chrono::microseconds>(end_time - */
+        /*                                                           start_time); */
+        /* total_time["task %d"] += static_cast<long long>(sleep_duration.count()); */
       }
     });
   }
@@ -234,8 +256,15 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
   for (auto &thread : _thread_pool) {
     thread.join();
   }
-  printf("Number of runs: %d, average time asleep %lld\n", _num_runs,
-         total_time["main_thread_sleep"] / _num_runs);
+  /* for (int i = 0; i < _num_threads; ++i) { */
+  /*   printf("Avg task for thread %d: %lld lock: %lld\n", i, */
+  /*          total_time["task %d"] / _num_runs, */
+  /*          total_time["thread_lock %d"] / _num_runs); */
+  /* } */
+  /* printf("Number of runs: %d, average time asleep %lld, average time top pop " */
+  /*        "%lld,\n", */
+  /*        _num_runs, total_time["main_thread_sleep"] / _num_runs, */
+  /*        total_time["populate"] / _num_runs); */
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
@@ -243,7 +272,7 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
   _num_runs += 1;
   /* _num_tasks.store(num_total_tasks); */
   _completed_tasks.store(0);
-  auto start_time = std::chrono::high_resolution_clock::now();
+  /* auto start_time = std::chrono::high_resolution_clock::now(); */
   for (int i = 0; i < num_total_tasks; ++i) {
     {
       std::lock_guard<std::mutex> lock(_just_a_mutex);
@@ -252,24 +281,26 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
       });
     }
   }
-  auto end_time = std::chrono::high_resolution_clock::now();
-  auto sleep_duration = std::chrono::duration_cast<std::chrono::microseconds>(
-      end_time - start_time);
-  /* printf("Time to enqueue %d tasks: %lld microseconds\n", num_total_tasks, */
-  /*        static_cast<long long>(sleep_duration.count())); */
+  /* auto end_time = std::chrono::high_resolution_clock::now(); */
+  /* auto sleep_duration = std::chrono::duration_cast<std::chrono::microseconds>( */
+  /*     end_time - start_time); */
+  /* total_time["populate"] += static_cast<long long>(sleep_duration.count()); */
   _work_available.notify_all();
 
+  /* start_time = std::chrono::high_resolution_clock::now(); */
   /* std::unique_lock<std::mutex> lock(_just_a_mutex); */
-  start_time = std::chrono::high_resolution_clock::now();
-  /* _work_completed.wait(lock, [this, num_total_tasks] { */
-  /*   return _completed_tasks >= num_total_tasks; */
-  /* }); */
-  while (_completed_tasks.load() < num_total_tasks) {
-  }
-  end_time = std::chrono::high_resolution_clock::now();
-  sleep_duration = std::chrono::duration_cast<std::chrono::microseconds>(
-      end_time - start_time);
-  total_time["main_thread_sleep"] += static_cast<long long>(sleep_duration.count());
+  std::unique_lock<std::mutex> lock(_another_mutex);
+  _work_completed.wait(lock, [this, num_total_tasks] {
+    /* printf("completed_tasks %d\n", _completed_tasks.load()); */
+    return _completed_tasks >= (num_total_tasks);
+  });
+  /* while (_completed_tasks.load() < num_total_tasks) { */
+  /* } */
+  /* end_time = std::chrono::high_resolution_clock::now(); */
+  /* sleep_duration = std::chrono::duration_cast<std::chrono::microseconds>( */
+      /* end_time - start_time); */
+  /* total_time["main_thread_sleep"] += */
+  /*     static_cast<long long>(sleep_duration.count()); */
   /* printf("Thread slept for %lld microseconds\n", */
   /*        static_cast<long long>(sleep_duration.count())); */
 }
