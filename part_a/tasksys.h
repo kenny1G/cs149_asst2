@@ -5,6 +5,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <condition_variable>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -68,6 +69,28 @@ public:
     delete mutex;
   }
 };
+
+class SleepThreadState : public ThreadState
+{
+public:
+  std::mutex *done_mutex;
+  std::condition_variable *available_cv;
+  std::condition_variable *done_cv;
+  int counter_;
+  SleepThreadState(int num_threads) : ThreadState(num_threads)
+  {
+    available_cv = new std::condition_variable();
+    done_cv = new std::condition_variable();
+    done_mutex = new std::mutex();
+    counter_ = 0;
+  }
+  ~SleepThreadState()
+  {
+    delete available_cv;
+    delete done_cv;
+    delete done_mutex;
+  }
+};
 /*
  * TaskSystemParallelThreadPoolSpinning: This class is the student's
  * implementation of a parallel task execution engine that uses a
@@ -106,6 +129,10 @@ public:
   TaskID runAsyncWithDeps(IRunnable *runnable, int num_total_tasks,
                           const std::vector<TaskID> &deps);
   void sync();
+
+private:
+  std::thread *thread_pool;
+  SleepThreadState *sleep_thread_state;
 };
 
 #endif
