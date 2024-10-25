@@ -196,6 +196,8 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
     _thread_pool[i] = std::thread([this, i]() {
       thread_local int local_count = 0;
       std::vector<std::function<void()>> local_tasks;
+      bool accounted_for = false;
+      std::string lock_name = "thread_lock" + std::to_string(i);
       while (true) {
         /* printf("In thread %d\n", i); */
         /* std::function<void()> task; */
@@ -206,7 +208,8 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
           auto sleep_duration =
               std::chrono::duration_cast<std::chrono::microseconds>(end_time -
                                                                     start_time);
-          total_time["thread_lock %d"] +=
+
+          total_time[lock_name] +=
               static_cast<long long>(sleep_duration.count());
           if (_task_queue.empty()) {
             if (local_count > 0) {
@@ -219,20 +222,29 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
               local_count = 0;
               lock.lock();
             }
+            accounted_for = false;
+            /* printf("%d WAITING\n", i); */
             _work_available.wait(
                 lock, [this] { return _stop || !_task_queue.empty(); });
+            /* printf("%d FREE\n", i); */
 
             if (_stop) {
               return;
             }
           }
+
           local_tasks.clear();
-          while (!_task_queue.empty() && local_tasks.size() < 8) {
+          while (!_task_queue.empty() && local_tasks.size() < 4) {
             local_tasks.push_back(std::move(_task_queue.front()));
             _task_queue.pop();
           }
           /* task = std::move(_task_queue.front()); */
           /* _task_queue.pop(); */
+        }
+        if (!accounted_for) {
+          _num_threads_unleashed.fetch_add(1);
+          /* printf("%d UNLEAHSED\n", i); */
+          accounted_for = true;
         }
         auto start_time = std::chrono::high_resolution_clock::now();
         for (auto &task : local_tasks) {
@@ -243,7 +255,7 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(
         auto sleep_duration =
             std::chrono::duration_cast<std::chrono::microseconds>(end_time -
                                                                   start_time);
-        total_time["task %d"] += static_cast<long long>(sleep_duration.count());
+        total_time[lock_name + "task"] += static_cast<long long>(sleep_duration.count());
         /* if (local_count >= 32) { */
         /*   int last_complete = _completed_tasks.fetch_add(local_count); */
         /*   if (last_complete + local_count >= _num_tasks) { */
@@ -267,14 +279,15 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     thread.join();
   }
   for (int i = 0; i < _num_threads; ++i) {
+    std::string lock_name = "thread_lock" + std::to_string(i);
     printf("Avg task for thread %d: %lld lock: %lld\n", i,
-           total_time["task %d"] / _num_runs,
-           total_time["thread_lock %d"] / _num_runs);
+           total_time[lock_name + "task"] / _num_runs,
+           total_time[lock_name] / _num_runs);
   }
   printf("Number of runs: %d, average time asleep %lld, average time top pop "
-         "%lld,\n",
+         "%lld, averae time notify %lld\n",
          _num_runs, total_time["main_thread_sleep"] / _num_runs,
-         total_time["populate"] / _num_runs);
+         total_time["populate"] / _num_runs, total_time["main_thread_notify"] / _num_runs);
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
@@ -282,6 +295,7 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
   _num_runs += 1;
   _num_tasks.store(num_total_tasks);
   _completed_tasks.store(0);
+  _num_threads_unleashed.store(0);
   auto start_time = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < num_total_tasks; ++i) {
     {
@@ -297,7 +311,19 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable *runnable,
   total_time["populate"] += static_cast<long long>(sleep_duration.count());
   /* printf("Time to enqueue %d tasks: %lld microseconds\n", num_total_tasks, */
   /*        static_cast<long long>(sleep_duration.count())); */
-  _work_available.notify_all();
+  start_time = std::chrono::high_resolution_clock::now();
+  /* while (_num_threads_unleashed.load() < _num_threads && */
+  /*        _completed_tasks < num_total_tasks) { */
+    _work_available.notify_all();
+    /* printf("NUM UNLEASED %d NUM THREADS %d \n",
+     * _num_threads_unleashed.load(), _num_threads); */
+  /* } */
+  end_time = std::chrono::high_resolution_clock::now();
+  sleep_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      end_time - start_time);
+  /* printf("YAYA %lld\n", static_cast<long long>(sleep_duration.count())); */
+  total_time["main_thread_notify"] +=
+      static_cast<long long>(sleep_duration.count());
 
   start_time = std::chrono::high_resolution_clock::now();
   /* std::unique_lock<std::mutex> lock(_just_a_mutex); */

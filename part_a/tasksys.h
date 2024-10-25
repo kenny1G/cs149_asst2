@@ -100,6 +100,7 @@ private:
   std::condition_variable _work_completed;
   std::atomic<int> _completed_tasks;
   std::atomic<int> _num_tasks;
+  std::atomic<int> _num_threads_unleashed;
 
   //FOR TESTING
   int _num_runs;
