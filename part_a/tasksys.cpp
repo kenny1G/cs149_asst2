@@ -126,7 +126,6 @@ void print_message(int thread_idx, const std::string &message)
 
 void thread_fn(ThreadState *thread_state, int thread_idx)
 {
-  thread_local int local_num_completed = 0;
   while (true)
   {
     if (thread_state->dead)
@@ -140,20 +139,15 @@ void thread_fn(ThreadState *thread_state, int thread_idx)
         continue;
       }
     }
+    std::atomic<int> *next_task = thread_idx % 2 == 0 ? &thread_state->evens_next_task : &thread_state->odds_next_task;
     // std::atomic<int> &next_task = thread_idx % 2 == 0 ? thread_state->evens_next_task : thread_state->odds_next_task;
-    // last_index = next_task.fetch_add(2);
-    last_index = thread_state->evens_next_task.fetch_add(1);
+    last_index = next_task->fetch_add(2);
+    // last_index = thread_state->evens_next_task.fetch_add(1);
     // busy_wait
     if (last_index >= thread_state->num_total_tasks)
     {
       // std::atomic<int> &next_task = thread_idx % 2 == 0 ? thread_state->evens_next_task : thread_state->odds_next_task;
       // next_task.fetch_sub(2);
-      // if (local_num_completed > 0)
-      // {
-      //   // print_message(thread_idx, std::string("Recording num completed tasks: ") + std::to_string(local_num_completed));
-      //   thread_state->num_completed_tasks.fetch_add(local_num_completed);
-      //   local_num_completed = 0;
-      // }
       continue;
     }
     // print_message(thread_idx, std::string("Running task ") + std::to_string(last_index));
