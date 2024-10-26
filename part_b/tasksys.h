@@ -2,9 +2,12 @@
 #define _TASKSYS_H
 
 #include "itasksys.h"
-#include <list>
+#include <condition_variable>
+#include <set>
+#include <mutex>
 #include <thread>
 #include <vector>
+#include <atomic>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -64,38 +67,47 @@ public:
   const TaskID id_;
 
   // States
-  std::mutex lock_;
+  std::mutex *mutex_;
   int next_task_id_;
   int num_total_tasks_;
   std::atomic<int> num_completed_tasks_;
 
   BulkNode(const TaskID id, const int num_total_tasks, IRunnable *runnable,
            const TaskID bottleneck_id)
-      : id_(id), next_task_id_(0), num_total_tasks_(num_total_tasks),
-        num_completed_tasks_(0), runnable_(runnable),
-        bottleneck_id_(bottleneck_id) {}
+      : runnable_(runnable), bottleneck_id_(bottleneck_id), id_(id),
+        mutex_(new std::mutex), next_task_id_(0),
+        num_total_tasks_(num_total_tasks),
+
+        num_completed_tasks_(0) {}
+  ~BulkNode() { delete mutex_; }
+
+  bool operator>(const BulkNode &other) const {
+    return bottleneck_id_ > other.bottleneck_id_;
+  }
 };
 
 class ThreadsState {
 public:
   const int num_threads_;
-  bool done_;
-  TaskID last_done_id_;
+  bool dead_;
 
   std::mutex *mutex_;
   std::mutex *another_mutex_;
   std::condition_variable *available_cv_;
   std::condition_variable *sync_cv_;
   std::atomic<int> num_exited_;
+  TaskID last_done_bulk_id_;
 
-  std::list<BulkNode *> dependent_queue_;
+  std::set<BulkNode *> dependent_queue_;
   std::vector<BulkNode *> ready_queue_;
 
   ThreadsState(int num_threads)
-      : num_threads_(num_threads), done_(false), last_done_id_(0),
-        num_exited_(0) {
+      : num_threads_(num_threads), dead_(false),
+        num_exited_(0), last_done_bulk_id_(0) {
     mutex_ = new std::mutex();
     another_mutex_ = new std::mutex();
+    available_cv_ = new std::condition_variable();
+    sync_cv_ = new std::condition_variable();
   }
   ~ThreadsState() {
     delete mutex_;
@@ -121,8 +133,8 @@ public:
   void sync();
 
   std::atomic<TaskID> next_bulk_id_;
-  std::thread *thread_pool;
-  ThreadsState *threads_state;
+  std::thread *thread_pool_;
+  ThreadsState *threads_state_;
 };
 
 #endif
